@@ -31,7 +31,7 @@ use std::default::Default;
 use std::env;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use structopt::clap::AppSettings;
 use structopt::StructOpt;
 
@@ -48,12 +48,10 @@ struct PackageInfo<'cfg> {
 }
 
 impl<'cfg> PackageInfo<'cfg> {
-    /// creates our package info from the config and the manifest_path,
+    /// creates our package info from the config and the `manifest_path`,
     /// which may not be provided
     fn new(config: &Config, manifest_path: Option<String>) -> CargoResult<PackageInfo> {
-        let manifest_path = manifest_path
-            .map(PathBuf::from)
-            .unwrap_or_else(|| config.cwd().to_path_buf());
+        let manifest_path = manifest_path.map_or_else(|| config.cwd().to_path_buf(), PathBuf::from);
         let root = important_paths::find_root_manifest_for_wd(&manifest_path)?;
         let ws = Workspace::new(&root, config)?;
         Ok(PackageInfo {
@@ -119,10 +117,9 @@ impl<'cfg> PackageInfo<'cfg> {
             )
         })?;
 
-        Ok(cwd
-            .strip_prefix(&root)
-            .map(|p| p.to_path_buf())
-            .context("Unable to if Cargo.toml is in a sub directory")?)
+        cwd.strip_prefix(&root)
+            .map(Path::to_path_buf)
+            .context("Unable to if Cargo.toml is in a sub directory")
     }
 }
 
@@ -194,7 +191,7 @@ fn real_main(options: Args, config: &mut Config) -> CliResult {
         .parent()
         .expect("Cargo.toml must have a parent");
 
-    if package.name().contains("_") {
+    if package.name().contains('_') {
         println!("Package name contains an underscore");
     }
 
@@ -244,32 +241,31 @@ fn real_main(options: Args, config: &mut Config) -> CliResult {
                 };
 
                 let rev = if let Some(precise) = precise {
-                    precise.to_owned()
+                    precise
                 } else {
                     match *src_id.git_reference()? {
-                        GitReference::Tag(ref s) => {
-                            s.to_owned()
-                        },
+                        GitReference::Tag(ref s) => s,
                         GitReference::Rev(ref s) => {
-                            if s.len() != 40 { // avoid reduced hashes
+                            if s.len() == 40 {
+                                // avoid reduced hashes
+                                s
+                            } else {
                                 let precise = src_id.precise();
                                 if let Some(p) = precise {
-                                    String::from(p).to_owned()
+                                    p
                                 } else {
                                     panic!("cannot find rev in correct format!");
                                 }
-                            } else {
-                                s.to_owned()
-                            }
-                        },
-                        GitReference::Branch(ref s) => {
-                            if s == "master" {
-                                String::from("${AUTOREV}")
-                            } else {
-                                s.to_owned()
                             }
                         }
-                        GitReference::DefaultBranch => String::from("${AUTOREV}"),
+                        GitReference::Branch(ref s) => {
+                            if s == "master" {
+                                "${AUTOREV}"
+                            } else {
+                                s
+                            }
+                        }
+                        GitReference::DefaultBranch => "${AUTOREV}",
                     }
                 };
 
@@ -282,7 +278,7 @@ fn real_main(options: Args, config: &mut Config) -> CliResult {
 
                 Some(format!("    {} \\\n", url))
             } else {
-                Some(format!("    {} \\\n", src_id.url().to_string()))
+                Some(format!("    {} \\\n", src_id.url()))
             }
         })
         .collect::<Vec<String>>();
@@ -314,7 +310,7 @@ fn real_main(options: Args, config: &mut Config) -> CliResult {
                     .as_ref()
                     .ok_or_else(|| anyhow!("No package.repository set in your Cargo.toml"))
             },
-            |s| Ok(s),
+            Ok,
         )?
         .trim();
 
@@ -328,10 +324,10 @@ fn real_main(options: Args, config: &mut Config) -> CliResult {
                     println!("Assuming {} license", license::CLOSED_LICENSE);
                     license::CLOSED_LICENSE
                 },
-                |s| s.as_str(),
+                String::as_str,
             )
         },
-        |s| s.as_str(),
+        String::as_str,
     );
 
     // compute the relative directory into the repo our Cargo.toml is at
@@ -349,7 +345,7 @@ fn real_main(options: Args, config: &mut Config) -> CliResult {
     }
 
     // license data in Yocto fmt
-    let license = license.split('/').map(|f| f.trim()).join(" | ");
+    let license = license.split('/').map(str::trim).join(" | ");
 
     // attempt to figure out the git repo for this project
     let project_repo = git::ProjectRepo::new(config).unwrap_or_else(|e| {
